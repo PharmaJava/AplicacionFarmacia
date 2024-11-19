@@ -1,0 +1,2 @@
+# AplicacionFarmacia
+Aplicacion de escritorio 
