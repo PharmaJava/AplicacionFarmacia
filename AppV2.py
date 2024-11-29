@@ -16,7 +16,7 @@ import webbrowser  # Para abrir WhatsApp Web
 def init_db():
     """
     Inicializa la base de datos y crea las tablas necesarias si no existen.
-    Incluye la columna 'ultima_actualizacion' directamente en la definición de la tabla Medicaciones.
+    Incluye la columna 'intervalo_dias' directamente en la definición de la tabla Medicaciones.
     """
     # Conexión a la base de datos
     conn = sqlite3.connect("pacientes.db")
@@ -33,7 +33,7 @@ def init_db():
         )
     """)
 
-    # Crear tabla Medicaciones con la columna 'ultima_actualizacion'
+    # Crear tabla Medicaciones con la columna 'ultima_actualizacion' y 'intervalo_dias'
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Medicaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +44,7 @@ def init_db():
             fecha_fin DATE NOT NULL,
             posologia INTEGER NOT NULL,
             unidades_por_caja INTEGER NOT NULL,
+            intervalo_dias REAL NOT NULL,  -- Intervalo en días (puede ser decimal)
             ultima_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (paciente_id) REFERENCES Pacientes (id)
         )
@@ -82,16 +83,17 @@ def añadir_paciente(root, calendar):
             fecha_fin = medicacion["fecha_fin"]
             posologia = medicacion["posologia"]
             unidades_por_caja = medicacion["unidades_por_caja"]
+            intervalo_dias = medicacion["intervalo_dias"]  # Intervalo en días
 
             # Insertar la medicación
             cursor.execute("""
                 INSERT INTO Medicaciones (
-                    paciente_id, medicacion, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja, ultima_actualizacion
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (paciente_id, medicamento, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja))
+                    paciente_id, medicacion, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias, ultima_actualizacion
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (paciente_id, medicamento, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias))
 
             # Actualizar el calendario con las fechas de reabastecimiento
-            marcar_dias_reabastecimiento(calendar, nombre, medicamento, fecha_inicio, fecha_fin, posologia, unidades_por_caja)
+            marcar_dias_reabastecimiento(calendar, nombre, medicamento, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias)
 
         conn.commit()
         conn.close()
@@ -99,11 +101,15 @@ def añadir_paciente(root, calendar):
         messagebox.showinfo("Éxito", "Paciente y medicaciones guardados correctamente.")
         ventana.destroy()
 
-    def marcar_dias_reabastecimiento(calendar, nombre, medicamento, fecha_inicio, fecha_fin, posologia, unidades_por_caja):
+    def marcar_dias_reabastecimiento(calendar, nombre, medicamento, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias):
         """Marca en el calendario las fechas de reabastecimiento con información del paciente y medicación."""
         fecha_actual = datetime.strptime(fecha_inicio, "%d-%m-%Y")
         fecha_final = datetime.strptime(fecha_fin, "%d-%m-%Y")
         
+        # Si el intervalo es 0, se marca todos los días
+        if intervalo_dias == 0:
+            intervalo_dias = 1  # Se toma a diario (1 día de intervalo)
+
         # Calcular la frecuencia de reabastecimiento (días entre reposiciones)
         dias_cubiertos = unidades_por_caja // posologia  # Días que cubre una caja
 
@@ -111,10 +117,10 @@ def añadir_paciente(root, calendar):
         evento = f"Paciente: {nombre}, Medicación: {medicamento}"
         calendar.calevent_create(fecha_actual, evento, "reposición")
 
-        # Luego marcar los días de reabastecimiento, sumando la frecuencia cada vez
+        # Luego marcar los días de reabastecimiento, sumando el intervalo cada vez
         while fecha_actual <= fecha_final:
             # Avanzar a la siguiente fecha de reposición
-            fecha_actual += timedelta(days=dias_cubiertos)
+            fecha_actual += timedelta(days=intervalo_dias)
 
             # Solo marcar si la fecha está dentro del rango (hasta fecha_final)
             if fecha_actual <= fecha_final:
@@ -126,15 +132,20 @@ def añadir_paciente(root, calendar):
             cn = entry_cn.get()
             fecha_inicio = calendar_inicio.get_date()
             fecha_fin = calendar_fin.get_date()
-            
+
             try:
-                posologia = int(entry_posologia.get())
+                # Permitir el uso de números decimales para la posología y el intervalo
+                posologia = float(entry_posologia.get())
                 unidades_por_caja = int(entry_unidades.get())
+
+                # Comprobar si el campo intervalo está vacío y asignar 0 si es el caso
+                intervalo_dias_str = entry_intervalo.get()
+                intervalo_dias = float(intervalo_dias_str) if intervalo_dias_str else 0
             except ValueError:
-                messagebox.showwarning("Datos inválidos", "Posología y unidades por caja deben ser números.")
+                messagebox.showwarning("Datos inválidos", "Posología debe ser un número, unidades por caja debe ser un entero y el intervalo debe ser un número.")
                 return
 
-            if not medicamento or not fecha_inicio or not fecha_fin or posologia <= 0 or unidades_por_caja <= 0:
+            if not medicamento or not fecha_inicio or not fecha_fin or posologia <= 0 or unidades_por_caja <= 0 or intervalo_dias < 0:
                 messagebox.showwarning("Datos incompletos", "Debe ingresar todos los datos de la medicación.")
                 return
 
@@ -144,10 +155,11 @@ def añadir_paciente(root, calendar):
                 "fecha_inicio": fecha_inicio,
                 "fecha_fin": fecha_fin,
                 "posologia": posologia,
-                "unidades_por_caja": unidades_por_caja
+                "unidades_por_caja": unidades_por_caja,
+                "intervalo_dias": intervalo_dias  # Guardar intervalo
             })
             lista_medicaciones.insert(
-                END, f"{medicamento} (CN: {cn}) - {fecha_inicio} a {fecha_fin} ({posologia} tomas/día, {unidades_por_caja} unidades/caja)"
+                END, f"{medicamento} (CN: {cn}) - {fecha_inicio} a {fecha_fin} ({posologia} tomas/día, {unidades_por_caja} unidades/caja, {intervalo_dias} días de intervalo)"
             )
             ventana_medicacion.destroy()
 
@@ -181,7 +193,11 @@ def añadir_paciente(root, calendar):
         entry_unidades = Entry(ventana_medicacion, font=("Arial", 12))
         entry_unidades.grid(row=5, column=1, padx=10, pady=10)
 
-        Button(ventana_medicacion, text="Guardar Medicación", command=guardar_medicacion, bg="#007C5C", fg="white", font=("Arial", 12)).grid(row=6, column=0, columnspan=2, pady=20)
+        Label(ventana_medicacion, text="Intervalo entre dosis (días):", bg="#50C878", font=("Arial", 12)).grid(row=6, column=0, padx=10, pady=10)
+        entry_intervalo = Entry(ventana_medicacion, font=("Arial", 12))
+        entry_intervalo.grid(row=6, column=1, padx=10, pady=10)
+
+        Button(ventana_medicacion, text="Guardar Medicación", command=guardar_medicacion, bg="#007C5C", fg="white", font=("Arial", 12)).grid(row=7, column=0, columnspan=2, pady=20)
 
     def eliminar_medicacion():
         seleccion = lista_medicaciones.curselection()
@@ -284,7 +300,8 @@ def marcar_dias_medicacion(calendar, ultima_actualizacion=None):
         # Añadir eventos al calendario
         actual = inicio
         while actual <= fin:
-            if actual + timedelta(days=frecuencia_dias) > fin:  # Último envase
+            # Si estamos en el último día de medicación, marcar "Último Envase"
+            if actual + timedelta(days=frecuencia_dias) > fin:  
                 calendar.calevent_create(
                     actual,
                     f"Último Envase de {nombre_medicacion} - Paciente: {nombre_paciente}",
@@ -296,6 +313,7 @@ def marcar_dias_medicacion(calendar, ultima_actualizacion=None):
                     f"Reposición de {nombre_medicacion} - Paciente: {nombre_paciente}",
                     "reposición"
                 )
+            # Solo avanzar si el intervalo es mayor a 0
             actual += timedelta(days=frecuencia_dias)
 
     # Configurar colores de los eventos
@@ -541,9 +559,9 @@ def ver_todos_pacientes():
             paciente_id, nombre, apellidos, telefono = paciente
             parent_id = tree.insert("", END, values=(paciente_id, nombre, apellidos, telefono))
 
-            # Obtener medicaciones del paciente
+            # Obtener medicaciones del paciente, incluyendo el intervalo de días
             cursor.execute("""
-                SELECT medicacion, cn, fecha_inicio, fecha_fin, posologia
+                SELECT medicacion, cn, fecha_inicio, fecha_fin, posologia, intervalo_dias
                 FROM Medicaciones
                 WHERE paciente_id = ?
             """, (paciente_id,))
@@ -551,14 +569,14 @@ def ver_todos_pacientes():
 
             # Insertar medicaciones como nodos hijos del paciente
             for medicacion in medicaciones:
-                medicacion_nombre, cn, fecha_inicio, fecha_fin, posologia = medicacion
+                medicacion_nombre, cn, fecha_inicio, fecha_fin, posologia, intervalo_dias = medicacion
                 tree.insert(
                     parent_id,
                     END,
                     values=(f"Medicamento: {medicacion_nombre} (CN: {cn})",
                             f"Inicio: {fecha_inicio}",
                             f"Fin: {fecha_fin}",
-                            f"Posología: {posologia}"),
+                            f"Posología: {posologia}, Intervalo: {intervalo_dias} días"),
                     tags=("child",)  # Estilo especial para medicaciones
                 )
 
@@ -809,13 +827,18 @@ def editar_paciente_desde_lista(root, paciente_id):
             fecha_fin = calendar_fin.get_date()
 
             try:
-                posologia = int(entry_posologia.get())
+                # Permitir el uso de números decimales para la posología y el intervalo
+                posologia = float(entry_posologia.get())
                 unidades_por_caja = int(entry_unidades.get())
+
+                # Comprobar si el campo intervalo está vacío y asignar 0 si es el caso
+                intervalo_dias_str = entry_intervalo.get()
+                intervalo_dias = float(intervalo_dias_str) if intervalo_dias_str else 0
             except ValueError:
-                messagebox.showwarning("Datos inválidos", "Posología y unidades por caja deben ser números.")
+                messagebox.showwarning("Datos inválidos", "Posología debe ser un número, unidades por caja debe ser un entero y el intervalo debe ser un número.")
                 return
 
-            if not medicamento or not fecha_inicio or not fecha_fin or posologia <= 0 or unidades_por_caja <= 0:
+            if not medicamento or not fecha_inicio or not fecha_fin or posologia <= 0 or unidades_por_caja <= 0 or intervalo_dias < 0:
                 messagebox.showwarning("Datos incompletos", "Debe ingresar todos los datos de la medicación.")
                 return
 
@@ -827,6 +850,7 @@ def editar_paciente_desde_lista(root, paciente_id):
                 "fecha_fin": fecha_fin,
                 "posologia": posologia,
                 "unidades_por_caja": unidades_por_caja,
+                "intervalo_dias": intervalo_dias,  # Agregar intervalo de días
             }
 
             conn = sqlite3.connect("pacientes.db")
@@ -836,9 +860,9 @@ def editar_paciente_desde_lista(root, paciente_id):
                 # Insertar nueva medicación en la base de datos
                 cursor.execute("""
                     INSERT INTO Medicaciones (
-                        paciente_id, medicacion, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja, ultima_actualizacion
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (paciente_id, medicamento, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja))
+                        paciente_id, medicacion, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias, ultima_actualizacion
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (paciente_id, medicamento, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias))
                 conn.commit()
                 nueva_medicacion["id"] = cursor.lastrowid  # Obtener el ID generado
                 medicaciones.append(nueva_medicacion)
@@ -846,16 +870,16 @@ def editar_paciente_desde_lista(root, paciente_id):
                 # Actualizar la interfaz
                 lista_medicaciones.insert(
                     END,
-                    f"{medicamento} (CN: {cn}) - {fecha_inicio} a {fecha_fin} ({posologia} tomas/día, {unidades_por_caja} unidades/caja)"
+                    f"{medicamento} (CN: {cn}) - {fecha_inicio} a {fecha_fin} ({posologia} tomas/día, {unidades_por_caja} unidades/caja, {intervalo_dias} días de intervalo)"
                 )
             elif accion == "editar" and indice is not None:
                 # Actualizar la medicación en la base de datos
                 medicacion_id = medicaciones[indice]['id']
                 cursor.execute("""
                     UPDATE Medicaciones
-                    SET medicacion = ?, cn = ?, fecha_inicio = ?, fecha_fin = ?, posologia = ?, unidades_por_caja = ?, ultima_actualizacion = CURRENT_TIMESTAMP
+                    SET medicacion = ?, cn = ?, fecha_inicio = ?, fecha_fin = ?, posologia = ?, unidades_por_caja = ?, intervalo_dias = ?, ultima_actualizacion = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (medicamento, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja, medicacion_id))
+                """, (medicamento, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias, medicacion_id))
                 conn.commit()
 
                 # Actualizar la medicación en la lista en memoria
@@ -866,7 +890,7 @@ def editar_paciente_desde_lista(root, paciente_id):
                 lista_medicaciones.delete(indice)
                 lista_medicaciones.insert(
                     indice,
-                    f"{medicamento} (CN: {cn}) - {fecha_inicio} a {fecha_fin} ({posologia} tomas/día, {unidades_por_caja} unidades/caja)"
+                    f"{medicamento} (CN: {cn}) - {fecha_inicio} a {fecha_fin} ({posologia} tomas/día, {unidades_por_caja} unidades/caja, {intervalo_dias} días de intervalo)"
                 )
 
             conn.close()
@@ -926,10 +950,15 @@ def editar_paciente_desde_lista(root, paciente_id):
         entry_unidades = Entry(frame_contenido, font=("Arial", 12))
         entry_unidades.grid(row=5, column=1, padx=10, pady=10)
 
+        Label(frame_contenido, text="Intervalo entre dosis (días):", bg="#50C878", font=("Arial", 12)).grid(row=6, column=0, padx=10, pady=10)
+        entry_intervalo = Entry(frame_contenido, font=("Arial", 12))
+        entry_intervalo.grid(row=6, column=1, padx=10, pady=10)
+
         # Precargar otros datos si es una edición
         if accion == "editar" and indice is not None:
             entry_posologia.insert(0, medicacion["posologia"])
             entry_unidades.insert(0, medicacion["unidades_por_caja"])
+            entry_intervalo.insert(0, medicacion["intervalo_dias"])
 
         # Botón para guardar los cambios
         Button(
@@ -939,7 +968,7 @@ def editar_paciente_desde_lista(root, paciente_id):
             bg="#007C5C",
             fg="white",
             font=("Arial", 12)
-        ).grid(row=6, column=0, columnspan=2, pady=20)
+        ).grid(row=7, column=0, columnspan=2, pady=20)
 
     # Obtener datos actuales del paciente
     conn = sqlite3.connect("pacientes.db")
@@ -948,7 +977,7 @@ def editar_paciente_desde_lista(root, paciente_id):
     paciente = cursor.fetchone()
 
     cursor.execute("""
-        SELECT id, medicacion, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja
+        SELECT id, medicacion, cn, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias
         FROM Medicaciones
         WHERE paciente_id = ?
     """, (paciente_id,))
@@ -994,7 +1023,7 @@ def editar_paciente_desde_lista(root, paciente_id):
     for medicacion in medicaciones_db:
         lista_medicaciones.insert(
             END,
-            f"{medicacion[1]} (CN: {medicacion[2]}) - {medicacion[3]} a {medicacion[4]} ({medicacion[5]} tomas/día, {medicacion[6]} unidades/caja)"
+            f"{medicacion[1]} (CN: {medicacion[2]}) - {medicacion[3]} a {medicacion[4]} ({medicacion[5]} tomas/día, {medicacion[6]} unidades/caja, {medicacion[7]} días de intervalo)"
         )
         medicaciones.append({
             "id": medicacion[0],
@@ -1004,6 +1033,7 @@ def editar_paciente_desde_lista(root, paciente_id):
             "fecha_fin": medicacion[4],
             "posologia": medicacion[5],
             "unidades_por_caja": medicacion[6],
+            "intervalo_dias": medicacion[7],
         })
 
     # Vincular doble clic en la lista de medicaciones
@@ -1025,9 +1055,9 @@ def exportar_datos():
         cursor.execute("SELECT * FROM Pacientes")
         pacientes = cursor.fetchall()
 
-        # Obtener los datos de las medicaciones
+        # Obtener los datos de las medicaciones, incluyendo intervalo_dias
         cursor.execute("""
-            SELECT p.nombre, p.apellidos, m.medicacion, m.cn, m.fecha_inicio, m.fecha_fin, m.posologia, m.unidades_por_caja, m.ultima_actualizacion
+            SELECT p.nombre, p.apellidos, m.medicacion, m.cn, m.fecha_inicio, m.fecha_fin, m.posologia, m.unidades_por_caja, m.intervalo_dias, m.ultima_actualizacion
             FROM Medicaciones m
             INNER JOIN Pacientes p ON m.paciente_id = p.id
         """)
@@ -1058,8 +1088,8 @@ def exportar_datos():
 
                 writer.writerow([])  # Línea vacía entre secciones
 
-                # Escribir encabezados para medicaciones
-                writer.writerow(["Nombre", "Apellidos", "Medicamento", "CN", "Fecha Inicio", "Fecha Fin", "Posología", "Unidades por Caja", "Última Actualización"])
+                # Escribir encabezados para medicaciones, incluyendo el intervalo de días
+                writer.writerow(["Nombre", "Apellidos", "Medicamento", "CN", "Fecha Inicio", "Fecha Fin", "Posología", "Unidades por Caja", "Intervalo Días", "Última Actualización"])
                 for medicacion in medicaciones:
                     writer.writerow(medicacion)
 
@@ -1075,10 +1105,10 @@ def exportar_datos():
                 )
                 df_pacientes.to_excel(writer, sheet_name="Pacientes", index=False)
 
-                # Convertir datos de medicaciones a un DataFrame y escribir en otra hoja
+                # Convertir datos de medicaciones a un DataFrame, incluyendo el intervalo de días
                 df_medicaciones = pd.DataFrame(
                     medicaciones,
-                    columns=["Nombre", "Apellidos", "Medicamento", "CN", "Fecha Inicio", "Fecha Fin", "Posología", "Unidades por Caja", "Última Actualización"]
+                    columns=["Nombre", "Apellidos", "Medicamento", "CN", "Fecha Inicio", "Fecha Fin", "Posología", "Unidades por Caja", "Intervalo Días", "Última Actualización"]
                 )
                 df_medicaciones.to_excel(writer, sheet_name="Medicaciones", index=False)
 
@@ -1089,6 +1119,7 @@ def exportar_datos():
 
     except Exception as e:
         messagebox.showerror("Error", f"No se pudo exportar: {e}")
+
 # Función para hacer backup de la base de datos
 def backup_database():
     try:
