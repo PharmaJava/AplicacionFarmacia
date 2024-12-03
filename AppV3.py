@@ -105,24 +105,63 @@ def añadir_paciente(root, calendar):
 
     def marcar_dias_reabastecimiento(calendar, nombre, medicamento, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias):
         """Marca en el calendario las fechas de reabastecimiento con información del paciente y medicación."""
-        fecha_actual = datetime.strptime(fecha_inicio, "%d-%m-%Y")
-        fecha_final = datetime.strptime(fecha_fin, "%d-%m-%Y")
-        
-        # Calcular la frecuencia de reposición (días entre reposiciones)
-        # Formula corregida: frecuencia de reposición = (unidades_por_caja / posologia) * intervalo_dias
+
+        # Validar y asignar valor predeterminado si intervalo_dias es 0, negativo o None
+        if intervalo_dias is None or intervalo_dias <= 0:
+            intervalo_dias = 1  # Valor predeterminado
+
+        # Validar otros datos de entrada
+        if posologia <= 0 or unidades_por_caja <= 0:
+            messagebox.showwarning(
+                "Datos inválidos",
+                "Posología y unidades por caja deben ser mayores que 0."
+            )
+            return
+
+        try:
+            # Convertir fechas al formato datetime
+            fecha_actual = datetime.strptime(fecha_inicio, "%d-%m-%Y")
+            fecha_final = datetime.strptime(fecha_fin, "%d-%m-%Y")
+        except ValueError:
+            messagebox.showerror(
+                "Error de formato de fecha",
+                "Las fechas deben estar en el formato DD-MM-YYYY."
+            )
+            return
+
+        # Validar el rango de fechas
+        if fecha_actual > fecha_final:
+            messagebox.showwarning(
+                "Rango de fechas inválido",
+                "La fecha de inicio no puede ser posterior a la fecha de fin."
+            )
+            return
+
+        # Calcular la frecuencia de reposición en días (permitiendo valores decimales)
         frecuencia_reposicion = (unidades_por_caja / posologia) * intervalo_dias
 
-        # Asegurarse de que el intervalo tenga un valor válido
-        frecuencia_reposicion = max(1, frecuencia_reposicion)  # Nunca menor que 1 día de reposición
+        # Validar que la frecuencia calculada sea válida
+        if frecuencia_reposicion <= 0:
+            messagebox.showwarning(
+                "Frecuencia de reposición inválida",
+                "La frecuencia calculada es inválida. Verifique los datos ingresados."
+            )
+            return
 
         # Añadir el primer evento (día de inicio)
         evento = f"Paciente: {nombre}, Medicación: {medicamento}"
         calendar.calevent_create(fecha_actual, evento, "reposición")
 
         # Iterar y marcar eventos en el rango hasta la fecha final
-        while fecha_actual + timedelta(days=frecuencia_reposicion) <= fecha_final:
+        while fecha_actual <= fecha_final:
+            # Incrementar la fecha actual por la frecuencia (incluso con decimales)
             fecha_actual += timedelta(days=frecuencia_reposicion)
-            calendar.calevent_create(fecha_actual, evento, "reposición")
+            if fecha_actual <= fecha_final:
+                calendar.calevent_create(fecha_actual, evento, "reposición")
+
+        # Configurar el color del evento
+        calendar.tag_config("reposición", background="red", foreground="white")
+
 
 
     def añadir_medicacion():
@@ -274,13 +313,27 @@ def marcar_dias_medicacion(calendar, ultima_actualizacion=None):
     for medicacion in medicaciones:
         nombre_paciente, fecha_inicio, fecha_fin, posologia, unidades_por_caja, nombre_medicacion, _, intervalo_dias = medicacion
 
-        # Parsear fechas
-        inicio = datetime.strptime(fecha_inicio, "%d-%m-%Y")
-        fin = datetime.strptime(fecha_fin, "%d-%m-%Y")
+        # Validar y ajustar valores predeterminados
+        if posologia <= 0 or unidades_por_caja <= 0:
+            continue  # Omitir medicaciones con datos inválidos
 
-        # Calcular frecuencia de reposición
-        dias_cubiertos = max(1, unidades_por_caja // posologia)  # Días que cubren las unidades por caja
-        frecuencia_reposicion = dias_cubiertos * intervalo_dias  # Ajustar el cálculo del intervalo
+        # Asignar un valor predeterminado si intervalo_dias es 0 o menor
+        intervalo_dias = max(1, intervalo_dias)
+
+        try:
+            inicio = datetime.strptime(fecha_inicio, "%d-%m-%Y")
+            fin = datetime.strptime(fecha_fin, "%d-%m-%Y")
+        except ValueError:
+            continue  # Omitir medicaciones con fechas mal formateadas
+
+        if inicio > fin:
+            continue  # Omitir medicaciones con un rango de fechas inválido
+
+        # Calcular la frecuencia de reposición en días
+        frecuencia_reposicion = (unidades_por_caja / posologia) * intervalo_dias
+
+        if frecuencia_reposicion <= 0:
+            continue  # Omitir medicaciones con frecuencias inválidas
 
         actual = inicio
         while actual <= fin:
@@ -701,7 +754,7 @@ def mostrar_informacion_paciente(paciente_id):
     except sqlite3.Error as e:
         messagebox.showerror("Error de base de datos", str(e))
 
-def editar_paciente_desde_lista(root, paciente_id,calendar):
+def editar_paciente_desde_lista(root, paciente_id, calendar):
     def guardar_paciente():
         # Capturar datos actualizados del paciente
         nombre = entry_nombre.get()
@@ -763,7 +816,7 @@ def editar_paciente_desde_lista(root, paciente_id,calendar):
             try:
                 posologia = float(entry_posologia.get())
                 unidades_por_caja = int(entry_unidades.get())
-                intervalo_dias = float(entry_intervalo.get()) if entry_intervalo.get() else 0
+                intervalo_dias = float(entry_intervalo.get())  # Mantener como número
             except ValueError:
                 messagebox.showwarning("Datos inválidos", "Posología debe ser un número, unidades por caja debe ser un entero y el intervalo debe ser un número.")
                 return
@@ -780,7 +833,7 @@ def editar_paciente_desde_lista(root, paciente_id,calendar):
                 "fecha_fin": fecha_fin,
                 "posologia": posologia,
                 "unidades_por_caja": unidades_por_caja,
-                "intervalo_dias": intervalo_dias,  # Agregar intervalo de días
+                "intervalo_dias": intervalo_dias,  # Guardar intervalo correctamente
             }
 
             conn = sqlite3.connect("pacientes.db")
@@ -800,7 +853,7 @@ def editar_paciente_desde_lista(root, paciente_id,calendar):
                 # Actualizar la interfaz
                 lista_medicaciones.insert(
                     END,
-                    f"{medicamento} (CN: {cn}) - {fecha_inicio} a {fecha_fin} ({posologia} tomas/día, {unidades_por_caja} unidades/caja, {intervalo_dias} días de intervalo)"
+                    f"{medicamento} (CN: {cn}) - {fecha_inicio} a {fecha_fin} ({posologia} tomas/día, {unidades_por_caja} unidades/caja, intervalo: {intervalo_dias} días)"
                 )
             elif accion == "editar" and indice is not None:
                 # Actualizar la medicación en la base de datos
@@ -820,7 +873,7 @@ def editar_paciente_desde_lista(root, paciente_id,calendar):
                 lista_medicaciones.delete(indice)
                 lista_medicaciones.insert(
                     indice,
-                    f"{medicamento} (CN: {cn}) - {fecha_inicio} a {fecha_fin} ({posologia} tomas/día, {unidades_por_caja} unidades/caja, {intervalo_dias} días de intervalo)"
+                    f"{medicamento} (CN: {cn}) - {fecha_inicio} a {fecha_fin} ({posologia} tomas/día, {unidades_por_caja} unidades/caja, intervalo: {intervalo_dias} días)"
                 )
 
             conn.close()
