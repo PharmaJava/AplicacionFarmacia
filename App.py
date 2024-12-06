@@ -317,8 +317,8 @@ def marcar_dias_medicacion(calendar, ultima_actualizacion=None):
         if posologia <= 0 or unidades_por_caja <= 0:
             continue  # Omitir medicaciones con datos inválidos
 
-        # Asignar un valor predeterminado si intervalo_dias es 0 o menor
-        intervalo_dias = max(1, intervalo_dias)
+        if intervalo_dias <= 1:  # Asegurar que el intervalo sea válido
+            intervalo_dias = 1
 
         try:
             inicio = datetime.strptime(fecha_inicio, "%d-%m-%Y")
@@ -329,16 +329,13 @@ def marcar_dias_medicacion(calendar, ultima_actualizacion=None):
         if inicio > fin:
             continue  # Omitir medicaciones con un rango de fechas inválido
 
-        # Calcular la frecuencia de reposición en días
+        # Calcular la frecuencia de reposición en días (permitiendo valores decimales)
         frecuencia_reposicion = (unidades_por_caja / posologia) * intervalo_dias
-
-        if frecuencia_reposicion <= 0:
-            continue  # Omitir medicaciones con frecuencias inválidas
 
         actual = inicio
         while actual <= fin:
             # Último envase
-            if actual + timedelta(days=frecuencia_reposicion) > fin:
+            if actual + timedelta(days=int(frecuencia_reposicion)) > fin:
                 calendar.calevent_create(
                     actual,
                     f"Último Envase de {nombre_medicacion} - Paciente: {nombre_paciente}",
@@ -350,7 +347,7 @@ def marcar_dias_medicacion(calendar, ultima_actualizacion=None):
                     f"Reposición de {nombre_medicacion} - Paciente: {nombre_paciente}",
                     "reposición"
                 )
-            actual += timedelta(days=frecuencia_reposicion)
+            actual += timedelta(days=int(frecuencia_reposicion))
 
     # Configurar colores
     calendar.tag_config("reposición", background="red", foreground="white")
@@ -1366,7 +1363,7 @@ def mostrar_ultimo_envase():
     cursor = conn.cursor()
 
     query = """
-        SELECT p.id, p.nombre, p.apellidos, m.medicacion, m.fecha_inicio, m.fecha_fin, m.posologia, m.unidades_por_caja
+        SELECT p.id, p.nombre, p.apellidos, m.medicacion, m.fecha_inicio, m.fecha_fin, m.posologia, m.unidades_por_caja, m.intervalo_dias
         FROM Pacientes p
         INNER JOIN Medicaciones m ON p.id = m.paciente_id
         ORDER BY p.apellidos ASC
@@ -1377,10 +1374,14 @@ def mostrar_ultimo_envase():
 
     # Procesar los resultados y calcular el último envase para cada medicación
     for paciente in pacientes_medicaciones:
-        paciente_id, nombre, apellidos, medicacion, fecha_inicio, fecha_fin, posologia, unidades_por_caja = paciente
+        paciente_id, nombre, apellidos, medicacion, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias = paciente
         
-        # Calcular la frecuencia de reposición (en días) con base en la posología
-        frecuencia_dias = max(1, unidades_por_caja // posologia)
+        # Asegurar que el intervalo de días sea al menos 1
+        if intervalo_dias <= 0:
+            intervalo_dias = 1  # Asignar valor predeterminado
+
+        # Calcular la frecuencia de reposición (en días) con base en la posología y el intervalo
+        frecuencia_dias = (unidades_por_caja / posologia) * intervalo_dias
 
         # Convertir las fechas de inicio y fin
         inicio = datetime.strptime(fecha_inicio, "%d-%m-%Y")
@@ -1389,7 +1390,7 @@ def mostrar_ultimo_envase():
         # Calcular el último envase
         fecha_actual = inicio
         while fecha_actual <= fin:
-            if fecha_actual + timedelta(days=frecuencia_dias) > fin:  # Último envase
+            if fecha_actual + timedelta(days=int(frecuencia_dias)) > fin:  # Último envase
                 # Insertar los datos en el Treeview
                 tree.insert(
                     "",
@@ -1398,7 +1399,7 @@ def mostrar_ultimo_envase():
                             f"{medicacion}",
                             f"{fecha_actual.strftime('%d-%m-%Y')}")
                 )
-            fecha_actual += timedelta(days=frecuencia_dias)
+            fecha_actual += timedelta(days=int(frecuencia_dias))
 
     # Botones para exportar e imprimir
     tk.Button(frame_contenedor, text="Imprimir", command=lambda: imprimir_ultimo_envase(tree, ventana_ultimo_envase), bg="#FF5733", fg="white", font=("Arial", 12)).pack(pady=10)
@@ -1877,111 +1878,33 @@ def proxima_dispensacion():
         for medicacion in medicaciones:
             nombre_medicacion, fecha_inicio, fecha_fin, posologia, unidades_por_caja, intervalo_dias = medicacion
 
-            # Calcular la frecuencia de reposición utilizando la fórmula:
-            dias_cubiertos = max(1, unidades_por_caja // posologia)
-            intervalo_calculado = (dias_cubiertos * intervalo_dias)  # Ajustamos el cálculo del intervalo
+            # Validar y ajustar valores predeterminados
+            if posologia <= 0 or unidades_por_caja <= 0:
+                continue
+
+            if intervalo_dias <= 1:  # Asegurar que el intervalo sea válido
+                intervalo_dias = 1
+
+            # Calcular la frecuencia de reposición
+            frecuencia_reposicion = (unidades_por_caja / posologia) * intervalo_dias
 
             inicio = datetime.strptime(fecha_inicio, "%d-%m-%Y")
             fin = datetime.strptime(fecha_fin, "%d-%m-%Y")
             fechas_reaprovisionamiento = []
 
-            # Calcular fechas de reaprovisionamiento utilizando el intervalo calculado
+            # Calcular fechas de reaprovisionamiento
             actual = inicio
             while actual <= fin:
                 fechas_reaprovisionamiento.append(actual.strftime("%d-%m-%Y"))
-                actual += timedelta(days=intervalo_calculado)
-
-            # Verificar si es la última dispensación
-            ultima_dispensacion = fin + timedelta(days=intervalo_calculado)
-            hoy = datetime.now()
-
-            mensaje_extra = ""
-            if ultima_dispensacion.date() <= hoy.date():
-                mensaje_extra = " - ¡Última Dispensación!"
+                actual += timedelta(days=int(frecuencia_reposicion))
 
             # Mostrar las fechas en la lista
             medicaciones_listbox.insert(END, f"Medicamento: {nombre_medicacion}")
-            medicaciones_listbox.insert(END, f"Fechas de reaprovisionamiento: {', '.join(fechas_reaprovisionamiento)} {mensaje_extra}")
+            medicaciones_listbox.insert(END, f"Fechas de reaprovisionamiento: {', '.join(fechas_reaprovisionamiento)}")
             medicaciones_listbox.insert(END, "-" * 50)  # Línea separadora
 
     # Vincular clic a la lista de sugerencias
     lista_sugerencias.bind("<Double-1>", mostrar_medicaciones)
-
-    # Función para exportar a Excel
-    def exportar_a_excel():
-        try:
-            # Recopilar datos
-            medicaciones = []
-            for i in range(medicaciones_listbox.size()):
-                medicaciones.append(medicaciones_listbox.get(i))
-
-            # Crear un DataFrame de pandas
-            df = pd.DataFrame(medicaciones, columns=["Medicamentos y Fechas"])
-
-            # Guardar en un archivo Excel
-            archivo = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel Files", "*.xlsx")])
-            if archivo:
-                df.to_excel(archivo, index=False)
-                messagebox.showinfo("Éxito", f"Archivo exportado correctamente a {archivo}")
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo exportar a Excel: {e}")
-
-    # Función para imprimir
-    def imprimir_estadisticas():
-        try:
-            texto_a_imprimir = "Próxima Dispensación:\n\n"
-
-            # Recopilar los datos de las medicaciones y fechas
-            for i in range(medicaciones_listbox.size()):
-                texto_a_imprimir += medicaciones_listbox.get(i) + "\n"
-
-            # Crear ventana para elegir la impresora
-            ventana_impresora = Toplevel(ventana_dispensacion)
-            ventana_impresora.title("Seleccionar Impresora")
-            ventana_impresora.geometry("400x200")
-            ventana_impresora.configure(bg="#50C878")
-
-            tk.Label(ventana_impresora, text="Selecciona una impresora:", bg="#50C878", font=("Arial", 12)).pack(pady=10)
-
-            # Obtener lista de impresoras
-            impresoras = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL)
-            lista_impresoras = [impresora[2] for impresora in impresoras]
-
-            # Crear combobox para seleccionar la impresora
-            seleccion_impresora = StringVar()
-            combobox_impresoras = ttk.Combobox(ventana_impresora, textvariable=seleccion_impresora, values=lista_impresoras, state="readonly", width=50)
-            combobox_impresoras.pack(pady=10)
-            combobox_impresoras.current(0)  # Seleccionar la primera impresora por defecto
-
-            def enviar_a_impresora():
-                try:
-                    seleccion = seleccion_impresora.get()
-                    if seleccion:
-                        # Enviar el texto a la impresora seleccionada
-                        handle_impresora = win32print.OpenPrinter(seleccion)
-                        job = win32print.StartDocPrinter(handle_impresora, 1, ("Próxima Dispensación", None, "RAW"))
-                        win32print.StartPagePrinter(handle_impresora)
-                        win32print.WritePrinter(handle_impresora, texto_a_imprimir.encode("utf-8"))
-                        win32print.EndPagePrinter(handle_impresora)
-                        win32print.EndDocPrinter(handle_impresora)
-                        win32print.ClosePrinter(handle_impresora)
-
-                        messagebox.showinfo("Éxito", f"Estadísticas enviadas a la impresora: {seleccion}")
-                        ventana_impresora.destroy()
-                    else:
-                        messagebox.showwarning("Advertencia", "No se seleccionó ninguna impresora.")
-                except Exception as e:
-                    messagebox.showerror("Error", f"No se pudo imprimir: {e}")
-
-            # Botón para confirmar la impresión
-            Button(ventana_impresora, text="Imprimir", command=enviar_a_impresora, bg="#007C5C", fg="white", font=("Arial", 12)).pack(pady=10)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo abrir el selector de impresoras: {e}")
-
-    # Botones para exportar e imprimir
-    Button(ventana_dispensacion, text="Exportar a Excel", command=exportar_a_excel, bg="#007C5C", fg="white", font=("Arial", 12)).pack(pady=10)
-    Button(ventana_dispensacion, text="Imprimir", command=imprimir_estadisticas, bg="#FF5733", fg="white", font=("Arial", 12)).pack(pady=10)
 
     # Botón para cerrar la ventana
     Button(
@@ -1994,7 +1917,6 @@ def proxima_dispensacion():
     ).pack(pady=10)
 
     ventana_dispensacion.mainloop()
-
 
 
 
