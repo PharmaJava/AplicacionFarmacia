@@ -1433,13 +1433,6 @@ import matplotlib.pyplot as plt
 def obtener_estadisticas_anuas(filtro, valor_filtro=None):
     """
     Función para obtener estadísticas anuales de medicación, filtrando por paciente, código nacional o nombre de medicación.
-    
-    Parámetros:
-    - filtro: puede ser "paciente", "cn", o "medicacion"
-    - valor_filtro: el valor por el cual filtrar (ejemplo, nombre de paciente o nombre de medicación)
-    
-    Retorna:
-    - DataFrame con las estadísticas solicitadas.
     """
     # Establecer la conexión a la base de datos
     conn = sqlite3.connect("pacientes.db")
@@ -1451,16 +1444,18 @@ def obtener_estadisticas_anuas(filtro, valor_filtro=None):
         FROM Medicaciones m
         INNER JOIN Pacientes p ON p.id = m.paciente_id
     """
-    
+
     # Filtrar según el tipo de filtro proporcionado
     if filtro == "paciente":
-        query += " WHERE p.nombre = ?"
-        cursor.execute(query, (valor_filtro,))
-    elif filtro == "cn":
-        query += " WHERE m.cn = ?"
-        cursor.execute(query, (valor_filtro,))
+        query += " WHERE p.id = ?"  # Filtrar por ID del paciente
+        valor_filtro = int(valor_filtro)  # Convertir valor_filtro a entero (ID del paciente)
     elif filtro == "medicacion":
         query += " WHERE m.medicacion = ?"
+    elif filtro == "cn":
+        query += " WHERE m.cn = ?"
+
+    # Ejecutar la consulta con o sin filtro
+    if "WHERE" in query:  # Solo pasar parámetros si hay un WHERE
         cursor.execute(query, (valor_filtro,))
     else:
         cursor.execute(query)
@@ -1493,8 +1488,8 @@ def obtener_estadisticas_anuas(filtro, valor_filtro=None):
             # Obtener el año de la fecha actual
             año = actual.year
 
-            # Calcular la cantidad de cajas pautadas (cajas = unidades / unidades_por_caja)
-            cantidad_pautada = unidades_por_caja / unidades_por_caja  # Aquí ya se está usando la cantidad de cajas
+            # Calcular la cantidad de cajas pautadas
+            cantidad_pautada = 1  # Siempre es una caja por iteración
 
             # Añadir los datos a la lista
             datos.append([nombre_paciente, nombre_medicacion, cn, año, cantidad_pautada])
@@ -1505,32 +1500,141 @@ def obtener_estadisticas_anuas(filtro, valor_filtro=None):
     # Convertir los datos a un DataFrame de pandas para un análisis más fácil
     df = pd.DataFrame(datos, columns=["Paciente", "Medicacion", "CN", "Año", "Cantidad Pautada"])
 
-    # Asegurarse de que la columna 'Cantidad Pautada' contiene solo datos numéricos
-    df["Cantidad Pautada"] = pd.to_numeric(df["Cantidad Pautada"], errors="coerce").fillna(0)
-
     # Agrupar por paciente, medicación, año, y sumar las cantidades pautadas
     df_agrupado = df.groupby(["Paciente", "Medicacion", "CN", "Año"]).agg({"Cantidad Pautada": "sum"}).reset_index()
 
     return df_agrupado
 
-# Función para mostrar las estadísticas en una ventana
-import tkinter as tk
-from tkinter import filedialog, messagebox
-import pandas as pd
+def pantalla_filtro_estadisticas():
+    global paciente_id  # Variable global para almacenar el ID del paciente seleccionado
+    paciente_id = None  # Inicializamos el ID
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import win32print  # Para manejo de impresoras en Windows
+    # Crear la ventana de filtros
+    ventana_filtro = Toplevel()
+    ventana_filtro.title("Seleccionar Filtro para Estadísticas")
+    ventana_filtro.geometry("800x600")
+    ventana_filtro.configure(bg="#50C878")
+
+    # Crear los widgets
+    frame_contenedor = Frame(ventana_filtro, bg="#50C878")
+    frame_contenedor.pack(fill=BOTH, expand=True, padx=20, pady=20)
+
+    Label(frame_contenedor, text="Seleccione un filtro:", bg="#50C878", fg="white", font=("Arial", 12)).pack(pady=10)
+    filtro_var = StringVar(ventana_filtro)
+    filtro_var.set("paciente")  # Valor predeterminado
+    filtros = ["paciente", "medicacion", "cn"]
+
+    filtro_menu = OptionMenu(frame_contenedor, filtro_var, *filtros)
+    filtro_menu.config(font=("Arial", 12), bg="#007C5C", fg="white", width=15)
+    filtro_menu.pack(pady=10)
+
+    Label(frame_contenedor, text="Ingrese el valor:", bg="#50C878", fg="white", font=("Arial", 12)).pack(pady=5)
+    entry_filtro = Entry(frame_contenedor, font=("Arial", 12), width=20)
+    entry_filtro.pack(pady=10)
+
+    lista_sugerencias = Listbox(frame_contenedor, width=40, height=10)
+    lista_sugerencias.pack(pady=10)
+
+    # Función dinámica de autocompletar
+    def buscar_autocompletar():
+        texto = entry_filtro.get().strip().lower()
+        lista_sugerencias.delete(0, END)
+
+        if not texto:
+            return
+
+        filtro = filtro_var.get()  # Obtener el filtro seleccionado
+        try:
+            conn = sqlite3.connect("pacientes.db")
+            cursor = conn.cursor()
+
+            if filtro == "paciente":
+                cursor.execute("""
+                    SELECT id, nombre, apellidos
+                    FROM Pacientes
+                    WHERE LOWER(nombre || ' ' || apellidos) LIKE ?
+                """, (f"%{texto}%",))
+                resultados = cursor.fetchall()
+                for resultado in resultados:
+                    lista_sugerencias.insert(END, f"{resultado[1]} {resultado[2]} - ID: {resultado[0]}")
+
+            elif filtro == "medicacion":
+                cursor.execute("""
+                    SELECT DISTINCT medicacion
+                    FROM Medicaciones
+                    WHERE LOWER(medicacion) LIKE ?
+                """, (f"%{texto}%",))
+                resultados = cursor.fetchall()
+                for resultado in resultados:
+                    lista_sugerencias.insert(END, resultado[0])
+
+            elif filtro == "cn":
+                cursor.execute("""
+                    SELECT DISTINCT cn
+                    FROM Medicaciones
+                    WHERE LOWER(cn) LIKE ?
+                """, (f"%{texto}%",))
+                resultados = cursor.fetchall()
+                for resultado in resultados:
+                    lista_sugerencias.insert(END, resultado[0])
+
+            conn.close()
+
+            if not lista_sugerencias.size():
+                lista_sugerencias.insert(END, "No se encontraron resultados")
+
+        except sqlite3.Error as e:
+            messagebox.showerror("Error de base de datos", f"No se pudo realizar la búsqueda: {e}")
+
+    def seleccionar_sugerencia(event):
+        global paciente_id
+        filtro = filtro_var.get()
+
+        if lista_sugerencias.curselection():
+            texto_seleccionado = lista_sugerencias.get(ACTIVE)
+
+            if filtro == "paciente":
+                if texto_seleccionado != "No se encontraron resultados":
+                    paciente_id = int(texto_seleccionado.split("- ID: ")[1])
+                    entry_filtro.delete(0, END)
+                    entry_filtro.insert(0, paciente_id)  # Aquí insertamos solo el ID, no el nombre completo
+            else:
+                if texto_seleccionado != "No se encontraron resultados":
+                    entry_filtro.delete(0, END)
+                    entry_filtro.insert(0, texto_seleccionado)
+
+    lista_sugerencias.bind("<Double-1>", seleccionar_sugerencia)
+    entry_filtro.bind("<KeyRelease>", lambda _: buscar_autocompletar())
+
+    # Cargar estadísticas
+    def cargar_estadisticas():
+        filtro = filtro_var.get()
+        valor_filtro = entry_filtro.get().strip()
+
+        # Si el filtro es paciente, usaremos el paciente_id como valor_filtro
+        if filtro == "paciente" and paciente_id is not None:
+            valor_filtro = paciente_id  # Usar el paciente_id seleccionado
+
+        # Si no hay valor_filtro, mostramos un mensaje de advertencia
+        if not valor_filtro:
+            messagebox.showwarning("Error", "Debe ingresar un valor para el filtro seleccionado.")
+            return
+
+        ventana_filtro.destroy()
+        mostrar_estadisticas(filtro, valor_filtro)
+
+    Button(frame_contenedor, text="Mostrar Estadísticas", command=cargar_estadisticas, bg="#FF5733", fg="white", font=("Arial", 14)).pack(pady=20)
+    ventana_filtro.mainloop()
+
+
 def mostrar_estadisticas(filtro, valor_filtro):
     """
     Muestra las estadísticas de medicación con opciones de exportar e imprimir directamente a una impresora.
     """
     # Llamar a la función de estadísticas y obtener los resultados
     if filtro == "paciente":
-        # Si el filtro es por paciente, buscamos las estadísticas por el ID del paciente
-        estadisticas = obtener_estadisticas_anuas("id", valor_filtro)
+        estadisticas = obtener_estadisticas_anuas("paciente", valor_filtro)  # Aseguramos que el filtro sea "paciente"
     else:
-        # Si el filtro es por medicación o CN, continuamos como estaba
         estadisticas = obtener_estadisticas_anuas(filtro, valor_filtro)
 
     # Si no hay datos, no continuamos
@@ -1571,7 +1675,6 @@ def mostrar_estadisticas(filtro, valor_filtro):
     # Función para imprimir directamente
     def imprimir_estadisticas():
         try:
-            # Crear ventana emergente para seleccionar impresora
             ventana_impresora = Toplevel(ventana_estadisticas)
             ventana_impresora.title("Seleccionar Impresora")
             ventana_impresora.geometry("400x200")
@@ -1579,21 +1682,18 @@ def mostrar_estadisticas(filtro, valor_filtro):
 
             tk.Label(ventana_impresora, text="Selecciona una impresora:", bg="#50C878", font=("Arial", 12)).pack(pady=10)
 
-            # Obtener lista de impresoras
             impresoras = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL)
             lista_impresoras = [impresora[2] for impresora in impresoras]
 
-            # Crear combobox para seleccionar la impresora
             seleccion_impresora = StringVar()
             combobox_impresoras = ttk.Combobox(ventana_impresora, textvariable=seleccion_impresora, values=lista_impresoras, state="readonly", width=50)
             combobox_impresoras.pack(pady=10)
-            combobox_impresoras.current(0)  # Seleccionar la primera impresora por defecto
+            combobox_impresoras.current(0)
 
             def enviar_a_impresora():
                 try:
                     seleccion = seleccion_impresora.get()
                     if seleccion:
-                        # Obtener datos del Treeview
                         texto_a_imprimir = "Estadísticas de Medicación:\n\n"
                         columnas = ["Paciente", "Medicacion", "CN", "Año", "Cantidad Pautada"]
                         texto_a_imprimir += "\t".join(columnas) + "\n"
@@ -1603,7 +1703,6 @@ def mostrar_estadisticas(filtro, valor_filtro):
                             fila = tree.item(child)["values"]
                             texto_a_imprimir += "\t".join(map(str, fila)) + "\n"
 
-                        # Enviar el texto a la impresora seleccionada
                         handle_impresora = win32print.OpenPrinter(seleccion)
                         job = win32print.StartDocPrinter(handle_impresora, 1, ("Estadísticas de Medicación", None, "RAW"))
                         win32print.StartPagePrinter(handle_impresora)
@@ -1619,20 +1718,34 @@ def mostrar_estadisticas(filtro, valor_filtro):
                 except Exception as e:
                     messagebox.showerror("Error", f"No se pudo imprimir: {e}")
 
-            # Botón para confirmar la impresión
             Button(ventana_impresora, text="Imprimir", command=enviar_a_impresora, bg="#007C5C", fg="white", font=("Arial", 12)).pack(pady=10)
 
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo abrir el selector de impresoras: {e}")
 
-    # Botón para imprimir
     Button(frame_contenedor, text="Imprimir", command=imprimir_estadisticas, bg="#FF5733", fg="white", font=("Arial", 12)).pack(pady=10)
+
+    # Función para generar gráfico
+    def generar_grafico():
+        try:
+            df_grafico = estadisticas.groupby(["Medicacion", "Año"])["Cantidad Pautada"].sum().unstack()
+
+            df_grafico.plot(kind="bar", stacked=True, figsize=(10, 6))
+            plt.title("Cantidad Pautada de Medicación por Año")
+            plt.ylabel("Cantidad Pautada")
+            plt.xlabel("Medicaciones")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.show()
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo generar el gráfico: {e}")
+
+    Button(frame_contenedor, text="Generar Gráfico", command=generar_grafico, bg="#007C5C", fg="white", font=("Arial", 12)).pack(pady=10)
 
     # Botón para exportar a Excel
     def exportar_a_excel_local():
         try:
-            archivo = filedialog.asksaveasfilename(defaultextension=".xlsx",
-                                                   filetypes=[("Excel Files", "*.xlsx")])
+            archivo = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel Files", "*.xlsx")])
             if archivo:
                 estadisticas.to_excel(archivo, index=False, engine="openpyxl")
                 messagebox.showinfo("Éxito", f"Archivo exportado correctamente a {archivo}")
@@ -1641,157 +1754,17 @@ def mostrar_estadisticas(filtro, valor_filtro):
 
     Button(frame_contenedor, text="Exportar a Excel", command=exportar_a_excel_local, bg="#007C5C", fg="white", font=("Arial", 12)).pack(pady=10)
 
+    # Botón para cerrar la ventana y volver a la pantalla de filtros
+    def cerrar_ventana():
+        ventana_estadisticas.destroy()
+        pantalla_filtro_estadisticas()  # Regresar a la pantalla de filtro
+
+    Button(frame_contenedor, text="Cerrar", command=cerrar_ventana, bg="#E74C3C", fg="white", font=("Arial", 12)).pack(pady=10)
+
     ventana_estadisticas.mainloop()
-
-# Función para generar gráficos de las estadísticas
-def generar_grafico(df):
-    """
-    Genera un gráfico de barras de las estadísticas anuales por medicación.
-    """
-    if df.empty:
-        messagebox.showwarning("Sin datos", "No hay datos suficientes para generar el gráfico.")
-        return
-
-    try:
-        # Agrupar por Medicación y Año para visualizar los totales de unidades pautadas
-        df_grafico = df.groupby(["Medicacion", "Año"])["Cantidad Pautada"].sum().unstack()
-
-        # Crear el gráfico
-        df_grafico.plot(kind="bar", stacked=True, figsize=(10, 6))
-        plt.title("Cantidad Pautada de Medicación por Año")
-        plt.ylabel("Cantidad Pautada")
-        plt.xlabel("Medicaciones")
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        plt.show()
-    except Exception as e:
-        messagebox.showerror("Error", f"No se pudo generar el gráfico: {e}")
-
 # Pantalla para elegir un filtro antes de mostrar las estadísticas
 import sqlite3
 from tkinter import messagebox, Toplevel, Label, Button, Entry, OptionMenu, StringVar, Listbox, Frame, BOTH, END, ACTIVE
-
-def pantalla_filtro_estadisticas():
-    """
-    Pantalla para elegir un filtro antes de mostrar las estadísticas.
-    """
-    global paciente_id  # Variable global para almacenar el ID del paciente seleccionado
-
-    # Inicializamos la variable paciente_id
-    paciente_id = None
-
-    # Crear la ventana de filtros
-    ventana_filtro = Toplevel()
-    ventana_filtro.title("Seleccionar Filtro para Estadísticas")
-    ventana_filtro.geometry("800x600")
-    ventana_filtro.configure(bg="#50C878")
-
-    # Crear un Frame contenedor para mejorar la disposición
-    frame_contenedor = Frame(ventana_filtro, bg="#50C878")
-    frame_contenedor.pack(fill=BOTH, expand=True, padx=20, pady=20)
-
-    # Título de la ventana
-    titulo = Label(frame_contenedor, text="Seleccione un filtro para las estadísticas", bg="#50C878", fg="white", font=("Arial", 16, "bold"))
-    titulo.pack(pady=20)
-
-    # Instrucción de selección de filtro
-    Label(frame_contenedor, text="Seleccione un filtro:", bg="#50C878", fg="white", font=("Arial", 12)).pack(pady=10)
-
-    # Filtro de opción con estilo
-    filtro_var = StringVar(ventana_filtro)
-    filtro_var.set("paciente")  # Valor predeterminado
-    filtros = ["paciente", "medicacion", "cn"]
-
-    # Personalización del OptionMenu para que se vea más atractivo
-    filtro_menu = OptionMenu(frame_contenedor, filtro_var, *filtros)
-    filtro_menu.config(font=("Arial", 12), bg="#007C5C", fg="white", width=15)
-    filtro_menu.pack(pady=10)
-
-    # Instrucción para el valor del filtro
-    Label(frame_contenedor, text="Ingrese el valor del filtro:", bg="#50C878", fg="white", font=("Arial", 12)).pack(pady=5)
-
-    # Entrada para el valor del filtro
-    entry_filtro = Entry(frame_contenedor, font=("Arial", 12), width=20)
-    entry_filtro.pack(pady=10)
-
-    # Listbox para mostrar las sugerencias
-    lista_sugerencias = Listbox(frame_contenedor, width=40, height=10)
-    lista_sugerencias.pack(pady=10)
-
-    # Función para buscar pacientes y autocompletar
-    def buscar_paciente_autocompletar(entry_busqueda, lista_sugerencias):
-        def actualizar_lista():
-            texto = entry_busqueda.get().strip().lower()
-            lista_sugerencias.delete(0, END)
-
-            if not texto:
-                return
-
-            try:
-                # Consultar la base de datos
-                conn = sqlite3.connect("pacientes.db")
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, nombre, apellidos
-                    FROM Pacientes
-                    WHERE LOWER(nombre || ' ' || apellidos) LIKE ?
-                """, (f"%{texto}%",))
-                resultados = cursor.fetchall()
-                conn.close()
-
-                if not resultados:
-                    lista_sugerencias.insert(END, "No se encontraron resultados")
-                    return
-
-                for resultado in resultados:
-                    lista_sugerencias.insert(END, f"{resultado[1]} {resultado[2]} - ID: {resultado[0]}")
-
-            except sqlite3.Error as e:
-                messagebox.showerror("Error de base de datos", f"No se pudo realizar la búsqueda: {e}")
-
-        def seleccionar_paciente(event):
-            global paciente_id  # Usamos la variable global para almacenar el ID del paciente
-            if lista_sugerencias.curselection():
-                texto_seleccionado = lista_sugerencias.get(ACTIVE)
-                if texto_seleccionado == "No se encontraron resultados":
-                    return
-
-                # Extraer el ID del paciente desde el texto seleccionado
-                paciente_id = int(texto_seleccionado.split("- ID: ")[1])  # Extrae el ID de la sugerencia
-                nombre_completo = texto_seleccionado.split(" - ID: ")[0]  # Solo el nombre completo
-
-                # Autocompletar el Entry con el nombre completo
-                entry_busqueda.delete(0, END)
-                entry_busqueda.insert(0, nombre_completo)  # Solo el nombre y apellidos
-
-        lista_sugerencias.bind("<Double-1>", seleccionar_paciente)
-        entry_busqueda.bind("<KeyRelease>", lambda _: actualizar_lista())
-
-    # Llamamos a la función para habilitar la búsqueda de pacientes en la entrada
-    buscar_paciente_autocompletar(entry_filtro, lista_sugerencias)
-
-    # Función para cargar las estadísticas
-    def cargar_estadisticas():
-        filtro = filtro_var.get()
-        valor_filtro = entry_filtro.get()  # Tomar el valor del filtro (nombre del paciente, medicación o CN)
-
-        # Si es paciente, usaremos el ID del paciente guardado
-        if filtro == "paciente" and paciente_id is not None:
-            valor_filtro = paciente_id  # Usar el ID del paciente seleccionado
-
-        ventana_filtro.destroy()  # Cerrar la ventana de filtros
-        mostrar_estadisticas(filtro, valor_filtro)  # Mostrar las estadísticas con el filtro seleccionado
-
-    # Botón para cargar las estadísticas con estilo
-    button_cargar = Button(frame_contenedor, text="Mostrar Estadísticas", command=cargar_estadisticas, bg="#FF5733", fg="white", font=("Arial", 14, "bold"))
-    button_cargar.pack(pady=20, padx=10)
-
-    # Botón para cerrar la ventana de filtros
-    button_cerrar = Button(frame_contenedor, text="Cancelar", command=ventana_filtro.destroy, bg="#E74C3C", fg="white", font=("Arial", 12, "bold"))
-    button_cerrar.pack(pady=10)
-
-    # Mostrar la ventana emergente
-    ventana_filtro.mainloop()
 
 
 def proxima_dispensacion():
@@ -1905,6 +1878,61 @@ def proxima_dispensacion():
 
     # Vincular clic a la lista de sugerencias
     lista_sugerencias.bind("<Double-1>", mostrar_medicaciones)
+
+    # Función para imprimir las medicaciones
+    def imprimir_medicaciones():
+        # Crear ventana para selección de impresora
+        ventana_impresora = Toplevel(ventana_dispensacion)
+        ventana_impresora.title("Seleccionar Impresora")
+        ventana_impresora.geometry("400x200")
+        ventana_impresora.configure(bg="#50C878")
+
+        Label(ventana_impresora, text="Selecciona una impresora:", bg="#50C878", font=("Arial", 12)).pack(pady=10)
+
+        # Obtener lista de impresoras disponibles
+        impresoras = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL)
+        lista_impresoras = [impresora[2] for impresora in impresoras]
+
+        # ComboBox para seleccionar la impresora
+        seleccion_impresora = StringVar()
+        combobox_impresoras = ttk.Combobox(ventana_impresora, textvariable=seleccion_impresora, values=lista_impresoras, state="readonly", width=50)
+        combobox_impresoras.pack(pady=10)
+        combobox_impresoras.current(0)  # Seleccionar la primera impresora por defecto
+
+        # Función para enviar los datos a la impresora seleccionada
+        def enviar_a_impresora():
+            try:
+                seleccion = seleccion_impresora.get()
+                if seleccion:
+                    texto_a_imprimir = "\n".join(medicaciones_listbox.get(0, END))
+
+                    # Enviar el texto a la impresora seleccionada
+                    handle_impresora = win32print.OpenPrinter(seleccion)
+                    job = win32print.StartDocPrinter(handle_impresora, 1, ("Medicaciones", None, "RAW"))
+                    win32print.StartPagePrinter(handle_impresora)
+                    win32print.WritePrinter(handle_impresora, texto_a_imprimir.encode("utf-8"))
+                    win32print.EndPagePrinter(handle_impresora)
+                    win32print.EndDocPrinter(handle_impresora)
+                    win32print.ClosePrinter(handle_impresora)
+
+                    messagebox.showinfo("Éxito", f"Medicaciones enviadas a la impresora: {seleccion}")
+                    ventana_impresora.destroy()
+                else:
+                    messagebox.showwarning("Advertencia", "No se seleccionó ninguna impresora.")
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo imprimir: {e}")
+
+        Button(ventana_impresora, text="Imprimir", command=enviar_a_impresora, bg="#007C5C", fg="white", font=("Arial", 12)).pack(pady=10)
+
+    # Botón para imprimir
+    Button(
+        ventana_dispensacion,
+        text="Imprimir Medicaciones",
+        command=imprimir_medicaciones,
+        bg="#007C5C",
+        fg="white",
+        font=("Arial", 12)
+    ).pack(pady=10)
 
     # Botón para cerrar la ventana
     Button(
